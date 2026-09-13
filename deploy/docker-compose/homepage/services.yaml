@@ -4,17 +4,17 @@
 
 - ag-flow:
     - Portal:
-          icon: mdi-developer-board
-          href: http://pod.{{HOMEPAGE_VAR_BASE_DOMAIN}}
-          description: Workspaces DevPod (portail)
+        icon: mdi-developer-board
+        href: http://{{HOMEPAGE_VAR_BASE_DOMAIN}}
+        description: Workspaces DevPod (portail)
     - RAG:
-          icon: mdi-database-search
-          href: http://rag.{{HOMEPAGE_VAR_BASE_DOMAIN}}/ui
-          description: Recherche augmentée (RAG)
+        icon: mdi-database-search
+        href: http://rag.{{HOMEPAGE_VAR_BASE_DOMAIN}}/ui
+        description: Recherche augmentée (RAG)
     - Doc:
-          icon: mdi-file-document-multiple
-          href: http://doc.{{HOMEPAGE_VAR_BASE_DOMAIN}}
-          description: Gestion documentaire (docflow)
+        icon: mdi-file-document-multiple
+        href: http://doc.{{HOMEPAGE_VAR_BASE_DOMAIN}}
+        description: Gestion documentaire (docflow)
 
 - Plateforme:
     - Harpocrate (Vault):
