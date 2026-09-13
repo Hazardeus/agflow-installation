@@ -1,27 +1,27 @@
 # Homepage — ressources listées
 # Doc : https://gethomepage.dev/configs/services/
-# Liens = URLs publiques (Cloudflare Tunnel → yoops.org). target _blank (settings.yaml).
+# Liens = déploiement courant (BASE_DOMAIN, via Caddy). target _blank (settings.yaml).
 
 - ag-flow:
     - Portal:
-        icon: mdi-developer-board
-        href: https://pod.yoops.org
-        description: Workspaces DevPod (portail)
+          icon: mdi-developer-board
+          href: http://pod.{{HOMEPAGE_VAR_BASE_DOMAIN}}
+          description: Workspaces DevPod (portail)
     - RAG:
-        icon: mdi-database-search
-        href: https://rag.yoops.org
-        description: Recherche augmentée (RAG)
+          icon: mdi-database-search
+          href: http://rag.{{HOMEPAGE_VAR_BASE_DOMAIN}}/ui
+          description: Recherche augmentée (RAG)
     - Doc:
-        icon: mdi-file-document-multiple
-        href: https://doc.yoops.org
-        description: Gestion documentaire (docflow)
+          icon: mdi-file-document-multiple
+          href: http://doc.{{HOMEPAGE_VAR_BASE_DOMAIN}}
+          description: Gestion documentaire (docflow)
 
 - Plateforme:
     - Harpocrate (Vault):
-        icon: mdi-shield-key
-        href: https://vault.yoops.org
-        description: Coffre de secrets
+          icon: mdi-shield-key
+          href: https://vault.yoops.org
+          description: Coffre de secrets
     - Keycloak (SSO):
-        icon: mdi-account-key
-        href: https://security.yoops.org
-        description: Authentification / OIDC
+          icon: mdi-account-key
+          href: https://security.yoops.org
+          description: Authentification / OIDC
