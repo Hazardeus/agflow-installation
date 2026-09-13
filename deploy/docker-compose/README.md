@@ -37,12 +37,14 @@ deploy/docker-compose/deploy.sh
 ```
 
 Le script :
-1. copie les dépendances dans `/opt/agflow` et génère `/opt/agflow/.env`
+1. prépare les répertoires durables sous `/srv/agflow` (bind mounts explicites,
+   voir plus bas) — Postgres chown `999:999` ;
+2. copie les dépendances dans `DEPLOY_DIR` et génère `DEPLOY_DIR/.env`
    (secrets rag + doc + mot de passe Postgres portal, non-interactif, idempotent) ;
-2. initialise `/data` du portal (CA, certs, `config.yaml`, `.env`) via le
+3. initialise `PORTAL_DATA_DIR` (CA, certs, `config.yaml`, `.env`) via le
    `portal/install.sh` vendorisé, puis y complète `DATABASE_URL` + `PORTAL_VAULT_KEK` ;
-3. `docker compose pull && up -d`, applique les migrations Alembic du portal ;
-4. vérifie la santé de **portal**, **rag** et **doc**.
+4. `docker compose pull && up -d`, applique les migrations Alembic du portal ;
+5. vérifie la santé de **portal**, **rag** et **doc**.
 
 Les mots de passe admin générés sont affichés en fin d'exécution.
 
@@ -50,14 +52,38 @@ Les mots de passe admin générés sont affichés en fin d'exécution.
 
 | Variable | Défaut | Rôle |
 |---|---|---|
-| `DEPLOY_DIR` | `/opt/agflow` | répertoire d'installation (rag/doc) |
+| `DEPLOY_DIR` | `/srv/agflow/app` | répertoire d'installation (compose, .env, Caddyfile...) |
 | `BASE_DOMAIN` | `agflow.local` | portal = base ; rag/doc en sous-domaines |
 | `RAG_PUBLIC_URL` | `http://<ip-hôte>` | URL publique rag |
 | `IMAGE_TAG` / `DOC_IMAGE_TAG` / `PORTAL_IMAGE_TAG` | `latest`/`latest`/`main` | versions |
 | `GHCR_TOKEN` | *(vide)* | token `read:packages` si images privées |
+| `PORTAL_DATA_DIR` | `/srv/agflow/portal-data` | données portal (CA, certs, config, .env) |
+| `POSTGRES_DATA_DIR` | `/srv/agflow/data/postgres` | données Postgres (chown `999:999`) |
+| `RAG_REPOS_DIR` | `/srv/agflow/data/rag-repos` | dépôts indexés par rag |
+| `CADDY_DATA_DIR` | `/srv/agflow/data/caddy-data` | état Caddy (certs internes) |
+| `CADDY_CONFIG_DIR` | `/srv/agflow/data/caddy-config` | config runtime Caddy |
 
-> Le portal stocke sa config et ses secrets dans `/data` (CA, certs,
-> `config.yaml`, `.env`) — distinct de `/opt/agflow`.
+> Le portal stocke sa config et ses secrets sous `PORTAL_DATA_DIR` (CA, certs,
+> `config.yaml`, `.env`) — distinct de `DEPLOY_DIR`. Le conteneur portal voit
+> toujours ce répertoire sous `/data` (chemin interne inchangé).
+
+### Disposition sur disque (VM Azure `vm-agflow-control-lab`)
+
+```
+/srv/agflow/
+├── app/                 # DEPLOY_DIR — compose, .env, Caddyfile, initdb/, homepage/
+├── portal-data/         # PORTAL_DATA_DIR — CA, certs, config.yaml, .env, .devpod
+├── data/
+│   ├── postgres/        # POSTGRES_DATA_DIR — chown 999:999 (uid/gid "postgres")
+│   ├── rag-repos/       # RAG_REPOS_DIR
+│   ├── caddy-data/      # CADDY_DATA_DIR
+│   └── caddy-config/    # CADDY_CONFIG_DIR
+└── backups/             # réservé — non encore câblé dans la stack
+```
+
+Ces chemins sont des **bind mounts stack-scoped** (pas de volumes Docker
+nommés) : tout vit sous `/srv/agflow`, le disque managé persistant de la VM.
+Le data-root global du moteur Docker (`/var/lib/docker`) n'est pas modifié.
 
 ## Contenu
 
