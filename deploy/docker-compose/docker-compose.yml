@@ -14,6 +14,11 @@
 #
 # Images : PULL ghcr.io (ag-flow/rag-*, ag-flow/doc, gaelgael5/workspace-portal).
 # TLS : HTTP simple derrière Cloudflare Tunnel (auto_https off).
+#
+# Persistance : bind mounts hôte explicites (pas de volumes Docker nommés) sous
+# POSTGRES_DATA_DIR / RAG_REPOS_DIR / CADDY_DATA_DIR / CADDY_CONFIG_DIR /
+# PORTAL_DATA_DIR — définis dans .env (déployés sous /srv/agflow par deploy.sh
+# sur la VM Azure ; défauts ci-dessous pour un usage hors deploy.sh).
 # ============================================================================
 services:
 
@@ -30,7 +35,7 @@ services:
       DOC_DB_PASSWORD: ${DOC_DB_PASSWORD}
       PORTAL_DB_PASSWORD: ${PORTAL_DB_PASSWORD}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ${POSTGRES_DATA_DIR:-/srv/agflow/data/postgres}:/var/lib/postgresql/data
       - ./initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
@@ -54,7 +59,7 @@ services:
       postgres:
         condition: service_healthy
     volumes:
-      - rag_repos:/var/lib/rag/repos
+      - ${RAG_REPOS_DIR:-/srv/agflow/data/rag-repos}:/var/lib/rag/repos
       - ./pricing.yml:/app/config/pricing.yml:ro
     healthcheck:
       test: ["CMD", "python", "-c",
@@ -115,15 +120,16 @@ services:
     networks: [agflow]
 
   # ── portal (devpod-ui / workspace-portal) ──────────────────────────────────
-  # Config + secrets dans /data (init par deploy.sh via portal/install.sh).
+  # Config + secrets sur le host sous PORTAL_DATA_DIR (init par deploy.sh via
+  # portal/install.sh) ; le conteneur continue de les voir sous /data.
   portal:
     image: ghcr.io/gaelgael5/workspace-portal:${PORTAL_IMAGE_TAG:-main}
     container_name: workspace-portal
     restart: always
-    env_file: /data/.env
+    env_file: ${PORTAL_DATA_DIR:-/srv/agflow/portal-data}/.env
     volumes:
-      - /data:/data
-      - /data/.devpod:/root/.devpod
+      - ${PORTAL_DATA_DIR:-/srv/agflow/portal-data}:/data
+      - ${PORTAL_DATA_DIR:-/srv/agflow/portal-data}/.devpod:/root/.devpod
     depends_on:
       postgres:
         condition: service_healthy
@@ -181,8 +187,8 @@ services:
       - "${RAG_PORT:-8083}:8083"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
+      - ${CADDY_DATA_DIR:-/srv/agflow/data/caddy-data}:/data
+      - ${CADDY_CONFIG_DIR:-/srv/agflow/data/caddy-config}:/config
     depends_on:
       backend:
         condition: service_healthy
@@ -200,12 +206,6 @@ services:
         max-size: "10m"
         max-file: "3"
     networks: [agflow]
-
-volumes:
-  postgres_data:
-  rag_repos:
-  caddy_data:
-  caddy_config:
 
 networks:
   agflow:

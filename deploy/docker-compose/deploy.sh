@@ -14,23 +14,36 @@
 #   deploy/docker-compose/deploy.sh
 #
 # Variables d'environnement (optionnelles) :
-#   DEPLOY_DIR      Répertoire d'installation     (défaut : /opt/agflow)
-#   BASE_DOMAIN     Domaine de base (doc.<dom>)   (défaut : agflow.local)
-#   RAG_PUBLIC_URL  URL publique rag              (défaut : http://<ip-hôte>)
-#   IMAGE_TAG       Tag images rag               (défaut : latest)
-#   DOC_IMAGE_TAG   Tag image doc                (défaut : latest)
-#   GHCR_TOKEN      Token read:packages si privé (défaut : vide = images publiques)
-#   GHCR_USER       Login GitHub associé au token (auto-détecté si absent)
+#   DEPLOY_DIR         Répertoire d'installation        (défaut : /srv/agflow/app)
+#   BASE_DOMAIN        Domaine de base (doc.<dom>)      (défaut : agflow.local)
+#   RAG_PUBLIC_URL     URL publique rag                 (défaut : http://<ip-hôte>)
+#   IMAGE_TAG          Tag images rag                  (défaut : latest)
+#   DOC_IMAGE_TAG      Tag image doc                   (défaut : latest)
+#   GHCR_TOKEN         Token read:packages si privé    (défaut : vide = images publiques)
+#   GHCR_USER          Login GitHub associé au token    (auto-détecté si absent)
+#   PORTAL_DATA_DIR    Données persistantes portal      (défaut : /srv/agflow/portal-data)
+#   POSTGRES_DATA_DIR  Données Postgres                 (défaut : /srv/agflow/data/postgres)
+#   RAG_REPOS_DIR      Dépôts rag                       (défaut : /srv/agflow/data/rag-repos)
+#   CADDY_DATA_DIR     Données Caddy                    (défaut : /srv/agflow/data/caddy-data)
+#   CADDY_CONFIG_DIR   Config Caddy                     (défaut : /srv/agflow/data/caddy-config)
+#   BACKUPS_DIR        Répertoire de sauvegardes        (défaut : /srv/agflow/backups)
 # ============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEPLOY_DIR="${DEPLOY_DIR:-/opt/agflow}"
+DEPLOY_DIR="${DEPLOY_DIR:-/srv/agflow/app}"
 BASE_DOMAIN="${BASE_DOMAIN:-agflow.local}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 DOC_IMAGE_TAG="${DOC_IMAGE_TAG:-latest}"
 GHCR_TOKEN="${GHCR_TOKEN:-}"
 GHCR_USER="${GHCR_USER:-}"
+# Disque managé durable (Azure control-plane VM : /srv/agflow).
+PORTAL_DATA_DIR="${PORTAL_DATA_DIR:-/srv/agflow/portal-data}"
+POSTGRES_DATA_DIR="${POSTGRES_DATA_DIR:-/srv/agflow/data/postgres}"
+RAG_REPOS_DIR="${RAG_REPOS_DIR:-/srv/agflow/data/rag-repos}"
+CADDY_DATA_DIR="${CADDY_DATA_DIR:-/srv/agflow/data/caddy-data}"
+CADDY_CONFIG_DIR="${CADDY_CONFIG_DIR:-/srv/agflow/data/caddy-config}"
+BACKUPS_DIR="${BACKUPS_DIR:-/srv/agflow/backups}"
 # IP de l'hôte (pour l'accès direct par IP à Homepage). Surchargée par l'env si fournie.
 HOST_IP="${HOST_IP:-$(ip -4 route get 1.1.1.1 2>/dev/null | grep -oP 'src \K[0-9.]+' | head -1 || echo 127.0.0.1)}"
 HOMEPAGE_PORT="${HOMEPAGE_PORT:-3000}"
@@ -56,9 +69,19 @@ python3 -c "import bcrypt" 2>/dev/null \
     || { error "module python 'bcrypt' requis (pip install bcrypt / apt-get install python3-bcrypt)."; exit 1; }
 info "python bcrypt : OK"
 
+# ─── Répertoires durables (/srv/agflow) — créés avant tout démarrage ──────────
+# PostgreSQL (image officielle) tourne en uid:gid 999:999 ("postgres") dans le
+# conteneur : le bind mount doit appartenir à ce même uid/gid pour que initdb
+# puisse écrire dedans.
+section "Préparation des répertoires durables..."
+mkdir -p "$DEPLOY_DIR" "$PORTAL_DATA_DIR" "$POSTGRES_DATA_DIR" "$RAG_REPOS_DIR" \
+         "$CADDY_DATA_DIR" "$CADDY_CONFIG_DIR" "$BACKUPS_DIR"
+chown -R 999:999 "$POSTGRES_DATA_DIR"
+chmod 700 "$POSTGRES_DATA_DIR"
+info "Répertoires prêts sous /srv/agflow (postgres chown 999:999)."
+
 # ─── Répertoire cible + copie des dépendances (depuis CE dépôt) ───────────────
 section "Installation dans $DEPLOY_DIR (dépendances depuis le repo)..."
-mkdir -p "$DEPLOY_DIR"
 for f in "${CONFIG_FILES[@]}"; do
     [ -f "${SCRIPT_DIR}/${f}" ] || { error "Dépendance manquante dans le repo : ${f}"; exit 1; }
     cp "${SCRIPT_DIR}/${f}" "${DEPLOY_DIR}/${f}"
@@ -135,19 +158,26 @@ grep -qE '^HOMEPAGE_PUBLIC_HOST=' "$ENV_FILE" || echo "HOMEPAGE_PUBLIC_HOST=${HO
 grep -qE '^PORTAL_PORT=' "$ENV_FILE" || echo "PORTAL_PORT=8081" >> "$ENV_FILE"
 grep -qE '^DOC_PORT='    "$ENV_FILE" || echo "DOC_PORT=8082"    >> "$ENV_FILE"
 grep -qE '^RAG_PORT='    "$ENV_FILE" || echo "RAG_PORT=8083"    >> "$ENV_FILE"
+# Chemins des bind mounts durables — réécrits à chaque run (idempotent, non-secrets).
+_set_kv POSTGRES_DATA_DIR "$POSTGRES_DATA_DIR"
+_set_kv RAG_REPOS_DIR "$RAG_REPOS_DIR"
+_set_kv CADDY_DATA_DIR "$CADDY_DATA_DIR"
+_set_kv CADDY_CONFIG_DIR "$CADDY_CONFIG_DIR"
+_set_kv PORTAL_DATA_DIR "$PORTAL_DATA_DIR"
 
-# ─── Initialisation /data du portal (CA, certs, config.yaml, .env) ─────────────
-section "Initialisation du portal (/data)..."
+# ─── Initialisation des données portal (CA, certs, config.yaml, .env) ─────────
+section "Initialisation du portal (${PORTAL_DATA_DIR})..."
 PORTAL_DB_PASSWORD="$(grep -E '^PORTAL_DB_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)"
-# Vendorisé depuis devpod-ui:scripts/install.sh — crée /data si absent (idempotent).
+# Vendorisé depuis devpod-ui:scripts/install.sh — crée le répertoire si absent (idempotent).
+# Chemin hôte = PORTAL_DATA_DIR ; le conteneur portal continue de le voir sous /data.
 env PORTAL_BASE_DOMAIN="${BASE_DOMAIN}" \
     PORTAL_EXTERNAL_URL="https://${BASE_DOMAIN}" \
     bash "${SCRIPT_DIR}/portal/install.sh" \
-        --data-root /data \
+        --data-root "$PORTAL_DATA_DIR" \
         --compose-file "${DEPLOY_DIR}/docker-compose.yml"
 
-# Compléter /data/.env (clés non gérées par install.sh) — jamais réécrites.
-PORTAL_ENV="/data/.env"
+# Compléter le .env portal (clés non gérées par install.sh) — jamais réécrites.
+PORTAL_ENV="${PORTAL_DATA_DIR}/.env"
 _pset() { # idempotent : ne réécrit pas une valeur déjà présente et non vide
     local k="$1" v="$2"
     if grep -qE "^$k=.+" "$PORTAL_ENV" 2>/dev/null; then return 0; fi
@@ -162,7 +192,7 @@ _pset PORTAL_VAULT_KEK "$(openssl rand -hex 32)"
 _pset DEV_MODE "false"
 chmod 600 "$PORTAL_ENV"
 PORTAL_LOCAL_PASS="$(grep -E '^LOCAL_PASSWORD=' "$PORTAL_ENV" | cut -d= -f2-)"
-info "/data initialisé — portal admin : user=admin  password=${PORTAL_LOCAL_PASS:-<voir /data/.env>}"
+info "${PORTAL_DATA_DIR} initialisé — portal admin : user=admin  password=${PORTAL_LOCAL_PASS:-<voir ${PORTAL_ENV}>}"
 
 # ─── Authentification GHCR (seulement si images privées) ──────────────────────
 if [ -n "$GHCR_TOKEN" ]; then
